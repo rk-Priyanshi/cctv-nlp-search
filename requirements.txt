@@ -1,0 +1,10 @@
+torch
+torchvision
+opencv-python
+qdrant-client
+ultralytics
+supervision
+transformers
+streamlit
+pillow
+pyyaml
