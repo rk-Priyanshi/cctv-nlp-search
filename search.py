@@ -6,7 +6,7 @@ client = QdrantClient(host="localhost", port=6333)
 COLLECTION_NAME = "cctv_frames"
 
 def search_video(query_text, top_k=3):
-    """Searches stored video frames using natural text prompts."""
+    """Searches stored object crops using natural text prompts."""
     print(f"\nSearching for: '{query_text}'...")
     
     # 1. Convert text prompt into a vector using CLIP
@@ -20,19 +20,32 @@ def search_video(query_text, top_k=3):
     )
     results = response.points
     
+    if not results:
+        print("No matching objects found.")
+        return
+
     # 3. Print match results
-    print(f"\nTop {top_k} matching timestamps for '{query_text}':")
+    print(f"\nTop {len(results)} matching objects for '{query_text}':")
     print("-" * 50)
     for i, hit in enumerate(results, 1):
         timestamp = hit.payload.get("timestamp", 0)
         confidence = hit.score * 100
         video_name = hit.payload.get("video_source", "Unknown")
+        object_label = hit.payload.get("object_label", "unknown")
+        bbox = hit.payload.get("bbox", None)
+        frame_number = hit.payload.get("frame_number", 0)
         
         print(f"Match #{i}:")
+        print(f"  - Object     : {object_label}")
         print(f"  - Timestamp  : {timestamp:.2f} seconds")
         print(f"  - Confidence : {confidence:.2f}%")
         print(f"  - Video File : {video_name}")
+        print(f"  - Frame #    : {frame_number}")
+        if bbox:
+            print(f"  - BBox (x1,y1,x2,y2) : {bbox}")
         print("-" * 50)
+
+    return results
 
 if __name__ == "__main__":
     # Test natural text queries against your CCTV footage:
