@@ -2,7 +2,7 @@ import cv2
 import os
 from ultralytics import YOLO
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct
+from qdrant_client.models import PointStruct, VectorParams, Distance
 from embedder import get_image_embedding
 import streamlit as st
 client = QdrantClient(
@@ -10,7 +10,15 @@ client = QdrantClient(
     api_key=st.secrets["QDRANT_API_KEY"]
 )
 COLLECTION_NAME = "cctv_frames"
-
+# Create the Qdrant collection if it does not already exist
+if not client.collection_exists(collection_name=COLLECTION_NAME):
+    client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=VectorParams(
+            size=512,
+            distance=Distance.COSINE
+        )
+    )
 # Load lightweight YOLOv8 nano model
 yolo_model = YOLO("yolov8n.pt")
 
