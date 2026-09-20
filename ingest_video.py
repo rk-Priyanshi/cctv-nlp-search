@@ -30,7 +30,7 @@ def process_video_with_yolo(video_path, sample_rate_sec=1):
 
     frame_interval = int(fps * sample_rate_sec)
     frame_count = 0
-    point_id = 0
+    point_id = client.count(collection_name=COLLECTION_NAME, exact=True).count
     points = []
 
     os.makedirs("temp_crops", exist_ok=True)
@@ -77,6 +77,7 @@ def process_video_with_yolo(video_path, sample_rate_sec=1):
                         "timestamp": timestamp_sec,
                         "frame_number": frame_count,
                         "video_source": os.path.basename(video_path),
+                        "video_path": video_path,
                         "object_label": label,
                         "bbox": [x1, y1, x2, y2]
                     }
