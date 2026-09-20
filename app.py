@@ -38,7 +38,12 @@ if uploaded_file is not None:
     st.session_state["uploaded_video_name"] = uploaded_file.name
 
     st.success(f"Video uploaded: {uploaded_file.name}")
+    if uploaded_file is not None:
+    if st.button("⚙️ Process Video"):
+        with st.spinner("Processing video... This may take some time."):
+            process_video_with_yolo(video_path)
 
+        st.success("✅ Video processed successfully! You can now search it.")
 # Search Bar Input
 query_text = st.text_input(
     "Enter search query:",
