@@ -11,7 +11,12 @@ client = QdrantClient(
 )
 COLLECTION_NAME = "cctv_frames"
 # Create the Qdrant collection if it does not already exist
-if not client.collection_exists(collection_name=COLLECTION_NAME):
+# Create the Qdrant collection if it does not already exist
+collections = client.get_collections().collections
+
+collection_names = [collection.name for collection in collections]
+
+if COLLECTION_NAME not in collection_names:
     client.create_collection(
         collection_name=COLLECTION_NAME,
         vectors_config=VectorParams(
