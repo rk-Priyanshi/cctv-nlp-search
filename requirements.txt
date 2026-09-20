@@ -2,7 +2,7 @@
 torch
 torchvision
 opencv-python-headless
-qdrant-client
+qdrant-client==1.15.1
 ultralytics
 supervision
 transformers
