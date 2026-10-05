@@ -5,7 +5,8 @@ import logging
 import tempfile
 
 from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchValue
+from qdrant_client.models import Filter, FieldCondition, MatchValue, PayloadSchemaType
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from embedder import get_text_embedding
 from ingest_video import process_video_with_yolo
@@ -128,23 +129,37 @@ if st.button("🔍 Search Video"):
 
             # Convert text query into CLIP embedding
             query_vector = get_text_embedding(query_text)
+            
+            # Make sure the video_source index exists (safe to repeat)
+            try:
+                client.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name="video_source",
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass  # already exists
 
             # Search ONLY inside the uploaded video
-            response = client.query_points(
-                collection_name=COLLECTION_NAME,
-                query=query_vector,
-                query_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="video_source",
-                            match=MatchValue(
-                                value=st.session_state["uploaded_video_name"]
+            try:
+                response = client.query_points(
+                    collection_name=COLLECTION_NAME,
+                    query=query_vector,
+                    query_filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="video_source",
+                                match=MatchValue(
+                                    value=st.session_state["uploaded_video_name"]
+                                )
                             )
-                        )
-                    ]
-                ),
-                limit=top_k
-            )
+                        ]
+                    ),
+                    limit=top_k
+                )
+            except UnexpectedResponse as e:
+                st.error(f"Qdrant error {e.status_code}: {e.content}")
+                st.stop()
 
             results = response.points
 
