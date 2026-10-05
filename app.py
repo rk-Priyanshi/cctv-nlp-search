@@ -5,6 +5,7 @@ import logging
 import tempfile
 
 from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchValue
 
 from embedder import get_text_embedding
 from ingest_video import process_video_with_yolo
@@ -132,6 +133,16 @@ if st.button("🔍 Search Video"):
             response = client.query_points(
                 collection_name=COLLECTION_NAME,
                 query=query_vector,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="video_source",
+                            match=MatchValue(
+                                value=st.session_state["uploaded_video_name"]
+                            )
+                        )
+                    ]
+                ),
                 limit=top_k
             )
 
