@@ -210,12 +210,34 @@ if st.button("🔍 Search Video"):
                             cap.release()
 
                             if ret:
-
-                                # Convert BGR → RGB
+                                                                # Convert BGR → RGB
                                 frame_rgb = cv2.cvtColor(
                                     frame,
                                     cv2.COLOR_BGR2RGB
                                 )
+
+                                # Draw the matched object's bounding box
+                                bbox = hit.payload.get("bbox")
+                                label = hit.payload.get("object_label", "")
+
+                                if bbox and label != "full_frame":
+                                    x1, y1, x2, y2 = bbox
+                                    cv2.rectangle(
+                                        frame_rgb,
+                                        (x1, y1),
+                                        (x2, y2),
+                                        (0, 255, 0),
+                                        3
+                                    )
+                                    cv2.putText(
+                                        frame_rgb,
+                                        label,
+                                        (x1, max(20, y1 - 8)),
+                                        cv2.FONT_HERSHEY_SIMPLEX,
+                                        0.8,
+                                        (0, 255, 0),
+                                        2
+                                    )
 
                                 st.image(
                                     frame_rgb,
