@@ -22,13 +22,21 @@ STORE_FULL_FRAME = True     # also embed the whole frame for scene-level queries
 
 # Broad open vocabulary: add anything your users might search for.
 VOCAB = [
-    "person", "face", "man", "woman", "child",
+    "person", "face", "man", "woman", "child", "girl",
     "backpack", "handbag", "suitcase", "bag", "box", "package", "umbrella",
     "helmet", "hat", "cap", "glasses", "mask", "jacket", "shirt", "shoe",
     "car", "truck", "bus", "van", "motorcycle", "bicycle", "scooter",
     "license plate", "bottle", "cup", "phone", "laptop", "camera", "key",
     "knife", "tool", "weapon", "dog", "cat", "bird",
     "chair", "table", "door", "bench", "sign", "trash can", "cart", "luggage",
+    # kitchen / food
+    "egg", "plate", "jar", "measuring cup", "tap", "mixer", "green onions",
+    "stove", "strainer", "pan", "spoon", "whisk", "basin", "chopstick",
+    "noodles", "food",
+    # home / scene
+    "plants", "window", "calendar", "frames", "books", "bed", "pillows",
+    # nature / effects
+    "water", "hills", "clouds", "steam",
 ]
 
 # ---------------- Lazy initialisation (no work at import time) ----------------
