@@ -11,11 +11,11 @@ from embedder import get_image_embedding_from_pil
 COLLECTION_NAME = "cctv_frames"
 
 # ---------------- Tunable settings ----------------
-CONF_THRESHOLD = 0.5        # lower to 0.3-0.4 if YOLO-World misses things
-IOU_THRESHOLD = 0.5         # NMS overlap threshold
-MIN_BOX_SIZE = 80           # discard boxes smaller than 80x80 px
+CONF_THRESHOLD = 0.30        # lower to 0.3-0.4 if YOLO-World misses things
+IOU_THRESHOLD = 0.45         # NMS overlap threshold
+MIN_BOX_SIZE = 30           # discard boxes smaller than 80x80 px
 MAX_BOX_AREA_RATIO = 0.6    # discard "loose" boxes covering >60% of the frame
-BOX_PADDING = 0.08          # 8% context padding around each box
+BOX_PADDING = 0.12          # 8% context padding around each box
 CLIP_INPUT_SIZE = 224
 UPSERT_BATCH = 64
 STORE_FULL_FRAME = True     # also embed the whole frame for scene-level queries
@@ -57,7 +57,7 @@ def get_client():
 def get_model():
     global _model
     if _model is None:
-        _model = YOLOWorld("yolov8s-worldv2.pt")
+        _model = YOLOWorld("yolov8m-worldv2.pt")
         _model.set_classes(VOCAB)
     return _model
 
@@ -115,7 +115,7 @@ def pad_box(x1, y1, x2, y2, frame_w, frame_h, pad=BOX_PADDING):
 
 
 # ---------------- Main pipeline ----------------
-def process_video_with_yolo(video_path, sample_rate_sec=1):
+def process_video_with_yolo(video_path, sample_rate_sec=0.25):
     """Extracts frames, detects objects with YOLO-World, embeds clean crops
     (and the full frame) with CLIP, and stores them in Qdrant."""
     if not os.path.exists(video_path):
@@ -178,7 +178,7 @@ def process_video_with_yolo(video_path, sample_rate_sec=1):
                 frame,
                 conf=CONF_THRESHOLD,
                 iou=IOU_THRESHOLD,
-                agnostic_nms=True,
+                agnostic_nms=False,
                 verbose=False,
             )[0]
 
@@ -213,4 +213,4 @@ def process_video_with_yolo(video_path, sample_rate_sec=1):
 
 
 if __name__ == "__main__":
-    process_video_with_yolo("Sample1.mp4", sample_rate_sec=1)
+    process_video_with_yolo("Sample1.mp4", sample_rate_sec=0.10)
