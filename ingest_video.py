@@ -22,7 +22,7 @@ STORE_FULL_FRAME = True     # also embed the whole frame for scene-level queries
 
 # Broad open vocabulary: add anything your users might search for.
 VOCAB = [
-    "person", "face", "man", "theif", "child", "girl",
+    "person", "face", "man", "thief", "child", "girl",
     "backpack", "handbag", "suitcase", "bag", "box", "package", "umbrella",
     "helmet", "hat", "cap", "glasses", "mask", "jacket", "shirt", "shoe",
     "car", "truck", "bus", "van", "motorcycle", "bicycle", "scooter",
@@ -178,7 +178,7 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
                 frame,
                 conf=CONF_THRESHOLD,
                 iou=IOU_THRESHOLD,
-                agnostic_nms=False,
+                agnostic_nms=True,
                 verbose=False,
             )[0]
 
@@ -194,7 +194,8 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
                 crop = frame[py1:py2, px1:px2]
                 if crop.size == 0:
                     continue
-
+                crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                pil_crop = Image.fromarray(crop_rgb)
                 vec = get_image_embedding_from_pil(letterbox_square(crop))
                 add_point(vec, ts, frame_count, label, [x1, y1, x2, y2], conf)
 
