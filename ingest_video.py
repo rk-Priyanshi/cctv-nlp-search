@@ -63,6 +63,16 @@ def ensure_collection():
             vectors_config=VectorParams(size=512, distance=Distance.COSINE),
         )
 
+    # Index so we can filter results by video name
+    try:
+        client.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name="video_source",
+            field_schema="keyword",
+        )
+    except Exception as e:
+        print(f"Payload index note: {e}")
+
 
 # ---------------- Crop helpers ----------------
 def letterbox_square(img_bgr, size=CLIP_INPUT_SIZE):
