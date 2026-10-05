@@ -1,9 +1,13 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
 torchvision
+numpy
 opencv-python-headless
 qdrant-client==1.15.1
-ultralytics
+ultralytics>=8.3.0
+git+https://github.com/ultralytics/CLIP.git
+ftfy
+regex
 supervision
 transformers
 streamlit
