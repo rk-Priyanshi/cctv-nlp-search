@@ -3,7 +3,7 @@ import cv2
 import os
 import logging
 import tempfile
-
+from concurrent.futures import ThreadPoolExecutor
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, PayloadSchemaType
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -25,7 +25,14 @@ client = QdrantClient(
 )
 
 COLLECTION_NAME = "cctv_frames"
-
+def read_frame(video_path, frame_number):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+    ret, frame = cap.read()
+    cap.release()
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if ret else None
 
 # -----------------------------
 # Streamlit Page
@@ -170,116 +177,49 @@ if st.button("🔍 Search Video"):
 
         if not results:
 
-            st.warning(
-                "No matching frames found in the uploaded video."
-            )
+            st.warning("No matching frames found in the uploaded video.")
 
         else:
 
-            st.subheader(
-                f"Top {len(results)} Matches for '{query_text}':"
-            )
+            st.subheader(f"Top {len(results)} Matches for '{query_text}':")
+
+            video_path = st.session_state["uploaded_video_path"]
+
+            if not os.path.exists(video_path):
+                st.error("Uploaded video file could not be found.")
+                st.stop()
+
+            # Load all matching frames in parallel
+            with ThreadPoolExecutor(max_workers=len(results)) as pool:
+                frames = list(pool.map(
+                    lambda h: read_frame(video_path, h.payload.get("frame_number", 0)),
+                    results
+                ))
 
             cols = st.columns(len(results))
 
             for i, hit in enumerate(results):
 
-                timestamp = hit.payload.get(
-                    "timestamp",
-                    0
-                )
-
+                timestamp = hit.payload.get("timestamp", 0)
+                frame_number = hit.payload.get("frame_number", 0)
                 confidence = hit.score * 100
-
-                frame_number = hit.payload.get(
-                    "frame_number",
-                    0
-                )
-
-                # Use the currently uploaded video
-                video_path = st.session_state[
-                    "uploaded_video_path"
-                ]
+                frame_rgb = frames[i]
 
                 with cols[i]:
 
-                    st.markdown(
-                        f"**Match #{i + 1}**"
-                    )
+                    st.markdown(f"**Match #{i + 1}**")
 
-                    if not os.path.exists(video_path):
-
-                        st.error(
-                            "Uploaded video file could not be found."
-                        )
-
+                    if frame_rgb is None:
+                        st.error(f"Could not read frame {frame_number}.")
                     else:
+                        bbox = hit.payload.get("bbox")
+                        label = hit.payload.get("object_label", "")
+                        if bbox and label != "full_frame":
+                            x1, y1, x2, y2 = bbox
+                            cv2.rectangle(frame_rgb, (x1, y1), (x2, y2), (0, 255, 0), 3)
+                            cv2.putText(frame_rgb, label, (x1, max(20, y1 - 8)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                        st.image(frame_rgb, width="stretch")
 
-                        cap = cv2.VideoCapture(video_path)
-
-                        if not cap.isOpened():
-
-                            st.error(
-                                "Could not open uploaded video."
-                            )
-
-                        else:
-
-                            # Move to the matching frame
-                            cap.set(
-                                cv2.CAP_PROP_POS_FRAMES,
-                                frame_number
-                            )
-
-                            ret, frame = cap.read()
-
-                            cap.release()
-
-                            if ret:
-                                                                # Convert BGR → RGB
-                                frame_rgb = cv2.cvtColor(
-                                    frame,
-                                    cv2.COLOR_BGR2RGB
-                                )
-
-                                # Draw the matched object's bounding box
-                                bbox = hit.payload.get("bbox")
-                                label = hit.payload.get("object_label", "")
-
-                                if bbox and label != "full_frame":
-                                    x1, y1, x2, y2 = bbox
-                                    cv2.rectangle(
-                                        frame_rgb,
-                                        (x1, y1),
-                                        (x2, y2),
-                                        (0, 255, 0),
-                                        3
-                                    )
-                                    cv2.putText(
-                                        frame_rgb,
-                                        label,
-                                        (x1, max(20, y1 - 8)),
-                                        cv2.FONT_HERSHEY_SIMPLEX,
-                                        0.8,
-                                        (0, 255, 0),
-                                        2
-                                    )
-
-                                st.image(
-                                    frame_rgb,
-                                    use_container_width=True
-                                )
-
-                            else:
-
-                                st.error(
-                                    f"Could not read frame {frame_number}."
-                                )
-
-                    st.write(
-                        f"⏱️ **Timestamp:** {timestamp:.2f}s"
-                    )
-
-                    st.write(
-                        f"🎯 **Confidence:** {confidence:.2f}%"
-                    )
+                    st.write(f"⏱️ **Timestamp:** {timestamp:.2f}s")
+                    st.write(f"🎯 **Confidence:** {confidence:.2f}%")
