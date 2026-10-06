@@ -1,4 +1,8 @@
 import os
+import queue
+import threading
+import time
+
 import cv2
 import numpy as np
 import streamlit as st
@@ -6,7 +10,7 @@ from PIL import Image
 from ultralytics import YOLOWorld
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, VectorParams, Distance
-from embedder import get_image_embedding_from_pil
+from embedder import get_image_embeddings_batch
 
 COLLECTION_NAME = "cctv_frames"
 
@@ -19,6 +23,10 @@ BOX_PADDING = 0.12          # 8% context padding around each box
 CLIP_INPUT_SIZE = 224
 UPSERT_BATCH = 64
 STORE_FULL_FRAME = True     # also embed the whole frame for scene-level queries
+# Threading settings
+FRAME_QUEUE_SIZE = 8        # decoded frames waiting for detection (keeps RAM low)
+UPLOAD_QUEUE_SIZE = 4       # batches waiting for upload to Qdrant
+
 
 # Broad open vocabulary: add anything your users might search for.
 VOCAB = [
@@ -115,9 +123,63 @@ def pad_box(x1, y1, x2, y2, frame_w, frame_h, pad=BOX_PADDING):
 
 
 # ---------------- Main pipeline ----------------
+# ---------------- Multithreaded pipeline ----------------
+# Reader thread   : decodes video frames        -> frame_q
+# Main thread     : YOLO-World + batched CLIP   -> upload_q
+# Uploader thread : sends points to Qdrant
+
+def _put(q, item, stop_event):
+    """Put with a timeout so a stopped pipeline never blocks forever."""
+    while not stop_event.is_set():
+        try:
+            q.put(item, timeout=0.5)
+            return True
+        except queue.Full:
+            continue
+    return False
+
+
+def _reader(video_path, fps, frame_interval, frame_q, stop_event):
+    cap = cv2.VideoCapture(video_path)
+    frame_count = 0
+    try:
+        while cap.isOpened() and not stop_event.is_set():
+            if frame_count % frame_interval == 0:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if not _put(frame_q, (frame_count, frame_count / fps, frame), stop_event):
+                    break
+            else:
+                if not cap.grab():      # skip unsampled frames without converting them
+                    break
+            frame_count += 1
+    finally:
+        cap.release()
+        _put(frame_q, None, stop_event)  # signals "no more frames"
+
+
+def _uploader(client, upload_q, stop_event, errors):
+    while True:
+        try:
+            batch = upload_q.get(timeout=0.5)
+        except queue.Empty:
+            if stop_event.is_set():
+                break
+            continue
+        if batch is None:
+            break
+        try:
+            client.upsert(collection_name=COLLECTION_NAME, points=batch)
+        except Exception as e:
+            errors.append(e)
+            stop_event.set()
+            break
+
+
 def process_video_with_yolo(video_path, sample_rate_sec=0.25):
-    """Extracts frames, detects objects with YOLO-World, embeds clean crops
-    (and the full frame) with CLIP, and stores them in Qdrant."""
+    """Threaded pipeline: decoding, detection + embedding, and uploading
+    run in parallel. Crops of each frame are embedded in one CLIP batch."""
     if not os.path.exists(video_path):
         print(f"Error: Video file '{video_path}' not found.")
         return
@@ -128,51 +190,52 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
     if fps == 0:
         print("Error: Could not read video FPS.")
         return
 
-    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     frame_interval = max(1, int(fps * sample_rate_sec))
-    frame_count = 0
     point_id = client.count(collection_name=COLLECTION_NAME, exact=True).count
-    points, total = [], 0
     video_name = os.path.basename(video_path)
 
-    def add_point(vector, ts, fno, label, bbox, conf):
-        nonlocal point_id, total
-        points.append(PointStruct(
-            id=point_id,
-            vector=vector,
-            payload={
-                "timestamp": ts,
-                "frame_number": fno,
-                "video_source": video_name,
-                "video_path": video_path,
-                "object_label": label,
-                "confidence": conf,
-                "bbox": bbox,
-            },
-        ))
-        point_id += 1
-        total += 1
+    frame_q = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
+    upload_q = queue.Queue(maxsize=UPLOAD_QUEUE_SIZE)
+    stop_event = threading.Event()
+    errors = []
 
-    def flush():
-        nonlocal points
-        if points:
-            client.upsert(collection_name=COLLECTION_NAME, points=points)
-            points = []
+    reader = threading.Thread(
+        target=_reader,
+        args=(video_path, fps, frame_interval, frame_q, stop_event),
+        daemon=True,
+    )
+    uploader = threading.Thread(
+        target=_uploader,
+        args=(client, upload_q, stop_event, errors),
+        daemon=True,
+    )
+    reader.start()
+    uploader.start()
 
-    print(f"Processing video with YOLO-World: {video_path}...")
+    points, total, n_frames = [], 0, 0
+    start = time.perf_counter()
+    print(f"Processing video with YOLO-World (multithreaded): {video_path}...")
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    try:
+        while True:
+            if stop_event.is_set():
+                break
+            try:
+                item = frame_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
 
-        if frame_count % frame_interval == 0:
-            ts = frame_count / fps
+            frame_no, ts, frame = item
+            n_frames += 1
 
             results = model.predict(
                 frame,
@@ -182,6 +245,7 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
                 verbose=False,
             )[0]
 
+            images, metas = [], []
             for box in results.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
@@ -194,24 +258,56 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
                 crop = frame[py1:py2, px1:px2]
                 if crop.size == 0:
                     continue
-                crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-                pil_crop = Image.fromarray(crop_rgb)
-                vec = get_image_embedding_from_pil(letterbox_square(crop))
-                add_point(vec, ts, frame_count, label, [x1, y1, x2, y2], conf)
+
+                images.append(letterbox_square(crop))
+                metas.append((label, [x1, y1, x2, y2], conf))
 
             if STORE_FULL_FRAME:
-                vec = get_image_embedding_from_pil(letterbox_square(frame))
-                add_point(vec, ts, frame_count, "full_frame", [0, 0, frame_w, frame_h], 1.0)
+                images.append(letterbox_square(frame))
+                metas.append(("full_frame", [0, 0, frame_w, frame_h], 1.0))
+
+            # One batched CLIP call for every crop in this frame
+            vectors = get_image_embeddings_batch(images) if images else []
+
+            for vec, (label, bbox, conf) in zip(vectors, metas):
+                points.append(PointStruct(
+                    id=point_id,
+                    vector=vec,
+                    payload={
+                        "timestamp": ts,
+                        "frame_number": frame_no,
+                        "video_source": video_name,
+                        "video_path": video_path,
+                        "object_label": label,
+                        "confidence": conf,
+                        "bbox": bbox,
+                    },
+                ))
+                point_id += 1
+                total += 1
 
             if len(points) >= UPSERT_BATCH:
-                flush()
+                _put(upload_q, points, stop_event)   # uploaded in the background
+                points = []
 
-        frame_count += 1
+        if points and not stop_event.is_set():
+            _put(upload_q, points, stop_event)
+        _put(upload_q, None, stop_event)
+        uploader.join()
 
-    cap.release()
-    flush()
-    print(f"\nSuccessfully stored {total} embeddings in Qdrant!")
+    except Exception:
+        stop_event.set()
+        raise
+    finally:
+        stop_event.set()
+        reader.join(timeout=5)
 
+    if errors:
+        raise errors[0]
+
+    elapsed = max(time.perf_counter() - start, 1e-6)
+    print(f"\nStored {total} embeddings from {n_frames} frames in {elapsed:.1f}s "
+          f"({n_frames / elapsed:.2f} frames/s, {total / elapsed:.2f} points/s)")
 
 if __name__ == "__main__":
     process_video_with_yolo("Sample1.mp4", sample_rate_sec=0.10)
