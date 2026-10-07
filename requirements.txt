@@ -11,3 +11,4 @@ transformers
 streamlit
 pillow
 pyyaml
+requests

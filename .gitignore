@@ -5,3 +5,4 @@ __pycache__/
 *.pt
 .env
 cctvProject_venv/
+.streamlit/secrets.toml

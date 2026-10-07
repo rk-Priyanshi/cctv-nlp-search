@@ -11,6 +11,7 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 
 from embedder import get_text_embedding
 from ingest_video import process_video_with_yolo
+import drive_video
 
 # Silence noisy/unrelated transformers warnings
 logging.getLogger("transformers").setLevel(logging.ERROR)
@@ -101,6 +102,92 @@ if uploaded_file is not None:
 
 
 # -----------------------------
+# Google Drive Video Selection
+# -----------------------------
+
+# Handle OAuth callback: Streamlit delivers the ?code= and ?state= query params here.
+_qp = st.query_params
+if "code" in _qp and not drive_video.is_authenticated():
+    _returned_state = _qp.get("state")
+    if not drive_video.verify_and_clear_state(_returned_state):
+        # State missing or mismatched — possible CSRF; reject and clear URL.
+        st.error(
+            "⚠️ OAuth state mismatch. The sign-in attempt was rejected to prevent "
+            "a potential CSRF attack. Please try signing in again."
+        )
+        st.query_params.clear()
+    else:
+        try:
+            tokens = drive_video.exchange_code_for_tokens(_qp["code"])
+            drive_video.save_tokens(tokens)
+            # Clear the code/state from the URL to avoid re-exchange on reload
+            st.query_params.clear()
+            st.rerun()
+        except Exception as _e:
+            st.error(f"Google OAuth failed: {_e}")
+
+with st.expander("📂 Select a video from Google Drive", expanded=False):
+
+    if not drive_video.is_authenticated():
+        auth_url = drive_video.get_auth_url()
+        st.markdown(
+            f"[🔑 Sign in with Google]({auth_url})",
+            help="Opens Google sign-in. After authorising, you will be redirected back here.",
+        )
+    else:
+        col_info, col_logout = st.columns([4, 1])
+        with col_info:
+            st.success("✅ Connected to Google Drive (read-only)")
+        with col_logout:
+            if st.button("Sign out", key="drive_signout"):
+                drive_video.logout()
+                st.rerun()
+
+        # List videos in the authenticated account's Drive
+        access_token = drive_video.get_access_token()
+        if access_token:
+            try:
+                with st.spinner("Fetching video list from Google Drive…"):
+                    drive_videos = drive_video.list_drive_videos(access_token)
+            except Exception as _e:
+                st.error(f"Could not list Drive videos: {_e}")
+                drive_videos = []
+
+            if not drive_videos:
+                st.info("No video files found in your Google Drive.")
+            else:
+                video_options = {f["name"]: f for f in drive_videos}
+                selected_name = st.selectbox(
+                    "Choose a video:",
+                    options=list(video_options.keys()),
+                    key="drive_selected_video",
+                )
+
+                if st.button("⬇️ Download & Process from Drive", key="drive_process_btn"):
+                    selected_file = video_options[selected_name]
+                    try:
+                        with st.spinner(f"Downloading '{selected_name}' from Google Drive…"):
+                            local_path = drive_video.download_drive_video(
+                                file_id=selected_file["id"],
+                                filename=selected_name,
+                                access_token=access_token,
+                            )
+
+                        # Store in session_state so the search section can find it
+                        st.session_state["uploaded_video_path"] = local_path
+                        st.session_state["uploaded_video_name"] = selected_name
+
+                        with st.spinner("Processing video… This may take some time."):
+                            process_video_with_yolo(local_path)
+
+                        st.session_state["video_processed"] = True
+                        st.success(
+                            f"✅ '{selected_name}' processed successfully! You can now search it."
+                        )
+                    except Exception as _e:
+                        st.error(f"Drive processing failed: {_e}")
+
+# -----------------------------
 # Search Section
 # -----------------------------
 
@@ -123,7 +210,7 @@ top_k = st.slider(
 
 if st.button("🔍 Search Video"):
 
-    if uploaded_file is None:
+    if uploaded_file is None and not st.session_state.get("uploaded_video_name"):
 
         st.warning("⚠️ Please upload a video first.")
 
