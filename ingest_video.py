@@ -23,6 +23,10 @@ BOX_PADDING = 0.12          # 8% context padding around each box
 CLIP_INPUT_SIZE = 224
 UPSERT_BATCH = 64
 STORE_FULL_FRAME = True     # also embed the whole frame for scene-level queries
+SAMPLE_RATE_SEC = 1.0        # process 1 frame per video-second (was 0.25)
+MAX_CROPS_PER_FRAME = 10     # keep only the most confident boxes per frame
+MOTION_THRESHOLD = 2.0       # skip frames that barely changed (0-255 scale)
+IMG_SIZE = 512               # detector input size (default 640)
 # Threading settings
 FRAME_QUEUE_SIZE = 8        # decoded frames waiting for detection (keeps RAM low)
 UPLOAD_QUEUE_SIZE = 4       # batches waiting for upload to Qdrant
@@ -177,7 +181,7 @@ def _uploader(client, upload_q, stop_event, errors):
             break
 
 
-def process_video_with_yolo(video_path, sample_rate_sec=0.25):
+def process_video_with_yolo(video_path, SAMPLE_RATE_SEC):
     """Threaded pipeline: decoding, detection + embedding, and uploading
     run in parallel. Crops of each frame are embedded in one CLIP batch."""
     if not os.path.exists(video_path):
@@ -220,6 +224,9 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
     uploader.start()
 
     points, total, n_frames = [], 0, 0
+    t_yolo = t_clip = 0.0
+    prev_small= None
+    
     start = time.perf_counter()
     print(f"Processing video with YOLO-World (multithreaded): {video_path}...")
 
@@ -235,8 +242,14 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
                 break
 
             frame_no, ts, frame = item
-            n_frames += 1
 
+            small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (160, 90))
+            if prev_small is not None and cv2.absdiff(small, prev_small).mean() < MOTION_THRESHOLD:
+                continue            # nothing changed since the last processed frame
+            prev_small = small
+
+            n_frames += 1
+            t0 = time.perf_counter()
             results = model.predict(
                 frame,
                 conf=CONF_THRESHOLD,
@@ -244,9 +257,12 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
                 agnostic_nms=True,
                 verbose=False,
             )[0]
-
+            t_yolo += time.perf_counter() - t0
             images, metas = [], []
-            for box in results.boxes:
+            boxes = sorted(results.boxes, key=lambda b: float(b.conf[0]), reverse=True)
+            for box in boxes:
+                if len(images) >= MAX_CROPS_PER_FRAME:
+                    break
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
                 label = results.names[int(box.cls[0])]
@@ -267,7 +283,9 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
                 metas.append(("full_frame", [0, 0, frame_w, frame_h], 1.0))
 
             # One batched CLIP call for every crop in this frame
+            t0 = time.perf_counter()
             vectors = get_image_embeddings_batch(images) if images else []
+            t_clip += time.perf_counter() - t0
 
             for vec, (label, bbox, conf) in zip(vectors, metas):
                 points.append(PointStruct(
@@ -308,6 +326,8 @@ def process_video_with_yolo(video_path, sample_rate_sec=0.25):
     elapsed = max(time.perf_counter() - start, 1e-6)
     print(f"\nStored {total} embeddings from {n_frames} frames in {elapsed:.1f}s "
           f"({n_frames / elapsed:.2f} frames/s, {total / elapsed:.2f} points/s)")
+    print(f"Time in YOLO-World: {t_yolo:.1f}s | Time in CLIP: {t_clip:.1f}s | "
+          f"Crops+frames embedded: {total}")
 
 if __name__ == "__main__":
     process_video_with_yolo("Sample1.mp4", sample_rate_sec=0.10)
