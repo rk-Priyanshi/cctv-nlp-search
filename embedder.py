@@ -6,7 +6,15 @@ import torch
 MODEL_NAME = "openai/clip-vit-base-patch32"
 model = CLIPModel.from_pretrained(MODEL_NAME)
 processor = CLIPProcessor.from_pretrained(MODEL_NAME)
-
+model.eval()
+if not torch.cuda.is_available():
+    try:
+        model = torch.ao.quantization.quantize_dynamic(
+            model, {torch.nn.Linear}, dtype=torch.qint8
+        )
+        print("CLIP quantized to int8")
+    except Exception as e:
+        print(f"Quantization skipped: {e}")
 def get_image_embeddings_batch(images, batch_size=32):
     """Embeds a list of PIL images in batches (much faster than one by one)."""
     vectors = []
