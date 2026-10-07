@@ -181,7 +181,7 @@ def _uploader(client, upload_q, stop_event, errors):
             break
 
 
-def process_video_with_yolo(video_path, SAMPLE_RATE_SEC):
+def process_video_with_yolo(video_path, sample_rate_sec= SAMPLE_RATE_SEC):
     """Threaded pipeline: decoding, detection + embedding, and uploading
     run in parallel. Crops of each frame are embedded in one CLIP batch."""
     if not os.path.exists(video_path):
