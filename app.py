@@ -19,10 +19,14 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 # Qdrant Connection
 # -----------------------------
 
-client = QdrantClient(
-    url=st.secrets["QDRANT_URL"],
-    api_key=st.secrets["QDRANT_API_KEY"]
-)
+@st.cache_resource
+def get_qdrant():
+    return QdrantClient(
+        url=st.secrets["QDRANT_URL"],
+        api_key=st.secrets["QDRANT_API_KEY"]
+    )
+
+client = get_qdrant()
 
 COLLECTION_NAME = "cctv_frames"
 def read_frame(video_path, frame_number):
@@ -135,18 +139,9 @@ if st.button("🔍 Search Video"):
         with st.spinner("Searching video frames..."):
 
             # Convert text query into CLIP embedding
+            t0 = time.perf_counter()
             query_vector = get_text_embedding(query_text)
-            
-            # Make sure the video_source index exists (safe to repeat)
-            try:
-                client.create_payload_index(
-                    collection_name=COLLECTION_NAME,
-                    field_name="video_source",
-                    field_schema=PayloadSchemaType.KEYWORD,
-                )
-            except Exception:
-                pass  # already exists
-
+            t_encode = (time.perf_counter() - t0) * 1000
             # Search ONLY inside the uploaded video
             try:
                 response = client.query_points(
@@ -169,7 +164,8 @@ if st.button("🔍 Search Video"):
                 st.stop()
 
             results = response.points
-
+            t_total = (time.perf_counter() - t0) * 1000
+            st.caption(f"⚡ Text encoding: {t_encode:.0f} ms | Total search: {t_total:.0f} ms")
 
         # -----------------------------
         # Display Results
