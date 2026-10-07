@@ -26,7 +26,8 @@ STORE_FULL_FRAME = True     # also embed the whole frame for scene-level queries
 SAMPLE_RATE_SEC = 1.0        # process 1 frame per video-second (was 0.25)
 MAX_CROPS_PER_FRAME = 10     # keep only the most confident boxes per frame
 MOTION_THRESHOLD = 2.0       # skip frames that barely changed (0-255 scale)
-IMG_SIZE = 512               # detector input size (default 640)
+IMG_SIZE = 480               # detector input size (default 640)
+TARGET_FRAMES = 12
 # Threading settings
 FRAME_QUEUE_SIZE = 8        # decoded frames waiting for detection (keeps RAM low)
 UPLOAD_QUEUE_SIZE = 4       # batches waiting for upload to Qdrant
@@ -196,6 +197,7 @@ def process_video_with_yolo(video_path, sample_rate_sec= SAMPLE_RATE_SEC):
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
     if fps == 0:
         print("Error: Could not read video FPS.")
@@ -254,6 +256,7 @@ def process_video_with_yolo(video_path, sample_rate_sec= SAMPLE_RATE_SEC):
                 frame,
                 conf=CONF_THRESHOLD,
                 iou=IOU_THRESHOLD,
+                imgsz=IMG_SIZE,
                 agnostic_nms=True,
                 verbose=False,
             )[0]
