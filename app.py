@@ -3,6 +3,7 @@ import cv2
 import os
 import logging
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue, PayloadSchemaType
